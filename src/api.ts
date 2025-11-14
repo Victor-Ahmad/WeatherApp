@@ -1,14 +1,20 @@
 // src/lib/getWeather.ts
 import { z } from "zod";
 import { weatherSchema } from "./schemas/weatherSchema";
+import { GeocodeSchema } from "./schemas/geocodeSchema";
 
-// Infer the final, OpenWeather-like type from your existing schema
+/* ========================================================================
+   TYPES (inferred from your existing schemas)
+======================================================================== */
+
 export type Weather = z.infer<typeof weatherSchema>;
+export type Geocode = z.infer<typeof GeocodeSchema>;
 
-/* -----------------------------
-   Open-Meteo response validator
------------------------------- */
-const openMeteoSchema = z.object({
+/* ========================================================================
+   OPEN-METEO: RESPONSE VALIDATORS (only the fields we read)
+======================================================================== */
+
+const openMeteoWeatherSchema = z.object({
   latitude: z.number(),
   longitude: z.number(),
   timezone: z.string(),
@@ -88,9 +94,34 @@ const openMeteoSchema = z.object({
     .optional(),
 });
 
-/* -----------------------------
-   Open-Meteo variable lists
------------------------------- */
+const openMeteoGeocodeSchema = z.object({
+  results: z
+    .array(
+      z.object({
+        id: z.number().optional(),
+        name: z.string(),
+        latitude: z.number(),
+        longitude: z.number(),
+        elevation: z.number().optional(),
+        feature_code: z.string().optional(),
+        country_code: z.string().optional(),
+        country: z.string().optional(),
+        admin1: z.string().optional(),
+        admin2: z.string().optional(),
+        admin3: z.string().optional(),
+        admin4: z.string().optional(),
+        timezone: z.string().optional(),
+        population: z.number().optional(),
+        postcodes: z.array(z.string()).optional(),
+      })
+    )
+    .optional(),
+});
+
+/* ========================================================================
+   OPEN-METEO: VARIABLE LISTS (to match your OpenWeather-like schema)
+======================================================================== */
+
 const CURRENT_PARAMS = [
   "temperature_2m",
   "apparent_temperature",
@@ -155,9 +186,10 @@ const DAILY_PARAMS = [
   "weather_code",
 ] as const;
 
-/* -----------------------------
-   Weather code -> OpenWeather-like mapping
------------------------------- */
+/* ========================================================================
+   HELPERS
+======================================================================== */
+
 function mapWeatherCodeToWeatherArray(code: number) {
   if (code === 0) {
     return [{ id: 800, main: "Clear", description: "clear sky", icon: "01d" }];
@@ -201,9 +233,10 @@ function mapWeatherCodeToWeatherArray(code: number) {
   ];
 }
 
-/* -----------------------------
-   Main fetch + mapping
------------------------------- */
+/* ========================================================================
+   WEATHER: Fetch Open-Meteo -> Map -> Validate against your Weather schema
+======================================================================== */
+
 export async function getWeather({
   lat,
   lon,
@@ -218,6 +251,9 @@ export async function getWeather({
     `&longitude=${lon}` +
     `&timezone=auto` +
     `&timeformat=unixtime` +
+    `&temperature_unit=celsius` + // align with OpenWeather metric temps
+    `&wind_speed_unit=ms` + // OpenWeather uses m/s
+    `&precipitation_unit=mm` + // OpenWeather uses mm
     `&current=${CURRENT_PARAMS.join(",")}` +
     `&hourly=${HOURLY_PARAMS.join(",")}` +
     `&daily=${DAILY_PARAMS.join(",")}`;
@@ -227,9 +263,8 @@ export async function getWeather({
     throw new Error(`Failed to fetch weather: ${res.status} ${res.statusText}`);
   }
 
-  // No "as any": validate the Open-Meteo payload first
   const json = await res.json();
-  const data = openMeteoSchema.parse(json);
+  const data = openMeteoWeatherSchema.parse(json);
 
   const {
     latitude,
@@ -243,7 +278,7 @@ export async function getWeather({
 
   const tzOffset = utc_offset_seconds ?? 0;
 
-  // ----- CURRENT -----
+  // CURRENT
   const currentDt = current?.time ?? Math.floor(Date.now() / 1000);
   const currentWeatherCode = current?.weather_code ?? 0;
 
@@ -269,7 +304,7 @@ export async function getWeather({
     weather: mapWeatherCodeToWeatherArray(currentWeatherCode),
   };
 
-  // ----- HOURLY -----
+  // HOURLY
   const hourlyLength = hourly?.time?.length ?? 0;
   const hourlyMapped =
     hourlyLength === 0 || !hourly
@@ -299,7 +334,7 @@ export async function getWeather({
           };
         });
 
-  // ----- DAILY -----
+  // DAILY
   const dailyLength = daily?.time?.length ?? 0;
   const dailyMapped =
     dailyLength === 0 || !daily
@@ -316,7 +351,7 @@ export async function getWeather({
             sunrise: daily.sunrise?.[i] ?? daily.time[i],
             sunset: daily.sunset?.[i] ?? daily.time[i],
 
-            // Not provided by Open-Meteo – placeholders; make optional in your schema if desired
+            // Not provided by Open-Meteo – placeholders; make optional in schema if desired
             moonrise: daily.time[i],
             moonset: daily.time[i],
             moon_phase: 0,
@@ -355,7 +390,7 @@ export async function getWeather({
           };
         });
 
-  // Validate against YOUR schema and return
+  // FINAL: validate against your OpenWeather-like schema and return
   return weatherSchema.parse({
     lat: latitude,
     lon: longitude,
@@ -365,4 +400,50 @@ export async function getWeather({
     hourly: hourlyMapped,
     daily: dailyMapped,
   });
+}
+
+/* ========================================================================
+   GEOCODE: Fetch Open-Meteo -> Map -> Validate against your Geocode schema
+======================================================================== */
+
+type GetGeocodeOptions = {
+  /** Number of results to return (Open-Meteo `count` param). */
+  count?: number;
+  /** Language (Open-Meteo `language` param). */
+  language?: string;
+};
+
+export async function getGeocode(
+  location: string,
+  { count = 1, language = "en" }: GetGeocodeOptions = {}
+): Promise<Geocode> {
+  const url =
+    `https://geocoding-api.open-meteo.com/v1/search` +
+    `?name=${encodeURIComponent(location)}` +
+    `&count=${count}` +
+    `&language=${encodeURIComponent(language)}` +
+    `&format=json`;
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Geocode fetch failed: ${res.status} ${res.statusText}`);
+  }
+
+  const raw = await res.json();
+  const parsed = openMeteoGeocodeSchema.parse(raw);
+  const results = parsed.results ?? [];
+
+  const openWeatherLike = results.map((r) => ({
+    name: r.name,
+    // OpenWeather expects a record of localized names; Open-Meteo returns one localized name.
+    local_names: { [language]: r.name } as Record<string, string>,
+    lat: r.latitude,
+    lon: r.longitude,
+    // Prefer full country name; fallback to ISO code.
+    country: r.country ?? r.country_code ?? "",
+    // OpenWeather "state" ≈ admin1
+    state: r.admin1 || undefined,
+  }));
+
+  return GeocodeSchema.parse(openWeatherLike);
 }
