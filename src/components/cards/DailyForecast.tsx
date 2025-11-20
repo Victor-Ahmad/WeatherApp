@@ -12,7 +12,10 @@ function DailyForecast({ coords }: Props) {
     queryFn: () => getWeather({ lat: coords.lat, lon: coords.lon }),
   });
   return (
-    <Card title={"Daily Forecast"} childrenClassName="flex flex-col gap-4">
+    <Card
+      title={"Daily Forecast"}
+      childrenClassName="flex flex-col gap-4 2xl:justify-between"
+    >
       {data?.daily.map((day) => (
         <div key={day.dt} className="flex justify-between">
           <p className="w-9">
