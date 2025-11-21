@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { weatherSchema } from "./schemas/weatherSchema";
 import { GeocodeSchema } from "./schemas/geocodeSchema";
-import { AirPollutionSchema } from "./schemas/AirPollutionSchema";
+import { AirPollutionSchema } from "./schemas/airPollutionSchema";
 
 /* ========================================================================
    TYPES (inferred from your existing schemas)
