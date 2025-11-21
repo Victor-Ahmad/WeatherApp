@@ -25,7 +25,7 @@ export default function SidePanel(props: Props) {
       )}
     >
       <button onClick={() => setIsSidePanelOpen(false)}>
-        <Chevron className="size-8 invert -ml-2 lg:hidden" />
+        <Chevron className="size-8  -ml-2 lg:hidden" />
       </button>
       <Suspense fallback={<SidePanelSkeleton />}>
         <AirPollution {...props} />
